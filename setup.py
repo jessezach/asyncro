@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import sys, os
 
-version = '0.01'
+version = '0.025'
 
 setup(name='asyncro',
       version=version,
@@ -26,4 +26,4 @@ setup(name='asyncro',
       entry_points="""
       # -*- Entry points: -*-
       """,
-      )
+    )

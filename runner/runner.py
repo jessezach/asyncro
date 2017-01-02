@@ -70,9 +70,10 @@ def run_tests(args):
 
 def initiate_dry_run(command):
     FNULL = open(os.devnull, 'w')
-    subprocess.call("pybot --dryrun --output=suites.xml --report=NONE --log=NONE %s"
-                    % command, stdout=FNULL, stderr=subprocess.STDOUT, shell=True)
-    tree = ET.parse('suites.xml')
+    curdir = os.getcwd()
+    subprocess.call("pybot --dryrun --output=%s/suites.xml --report=NONE --log=NONE %s"
+                    % (curdir, command), stdout=FNULL, stderr=subprocess.STDOUT, shell=True)
+    tree = ET.parse(curdir + '/suites.xml')
     root = tree.getroot()
     suites = []
     for suite in root.iter('suite'):
@@ -81,14 +82,14 @@ def initiate_dry_run(command):
             path = attrs['source']
             if '.robot' in path:
                 suites.append(path)
-    os.remove('suites.xml')
+    os.remove(curdir + '/suites.xml')
     return suites
 
 
 def merge_results(suites, test_folder, results_folder):
+    curdir = os.getcwd()
     for i in range(len(suites)):
         suite = suites[i]
-        curdir = os.getcwd()
         test_path = suite.replace((curdir + '/'), '')
         folder = string.replace(test_path, '/', '.')
         suites[i] = curdir + '/' + results_folder + '/' + folder + '/result.xml'
