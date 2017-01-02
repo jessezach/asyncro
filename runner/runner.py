@@ -5,7 +5,6 @@ import multiprocessing
 import signal
 import shutil
 
-
 CTRL_C_PRESSED = False
 
 
@@ -47,6 +46,11 @@ def run_tests(args):
     command, options, test_folder, results_folder, processes = parse_args(args)
     if command:
         suites = initiate_dry_run(command)
+        curdir = os.getcwd()
+
+        if os.path.exists(curdir + '/' + results_folder):
+            shutil.rmtree(curdir + '/' + results_folder)
+
         original_signal_handler = signal.signal(signal.SIGINT, keyboard_interrupt)
         pool = multiprocessing.Pool(processes=processes)
         result = pool.map_async(execute_test, ((suite, test_folder, options, results_folder)
@@ -58,7 +62,7 @@ def run_tests(args):
             except IOError:
                 keyboard_interrupt()
         signal.signal(signal.SIGINT, original_signal_handler)
-        # copy_all_screenshots(suites, test_folder, results_folder)
+        copy_all_screenshots(suites, results_folder)
         merge_results(suites, test_folder, results_folder)
     else:
         raise ValueError('No test folder provided')
@@ -84,12 +88,11 @@ def initiate_dry_run(command):
 def merge_results(suites, test_folder, results_folder):
     for i in range(len(suites)):
         suite = suites[i]
-        index = suite.rfind(test_folder)
-        new_suite = suite[:index]
-        test_path = suite[index:]
+        curdir = os.getcwd()
+        test_path = suite.replace((curdir + '/'), '')
         folder = string.replace(test_path, '/', '.')
-        suites[i] = new_suite + results_folder + '/' + folder + '/result.xml'
-        output_directory = new_suite + results_folder
+        suites[i] = curdir + '/' + results_folder + '/' + folder + '/result.xml'
+        output_directory = curdir + '/' + results_folder
     subprocess.call('rebot --outputdir=%s --name=Tests --output output.xml %s'
                     % (output_directory, ' '.join(suites)), shell=True)
 
@@ -99,14 +102,13 @@ def execute_test(args):
     if CTRL_C_PRESSED:
         # Keyboard interrupt has happened!
         return
-    path, folder_name, command, results_folder = args
-    index = path.rfind(folder_name)
-    new_path = path[:index]
-    test_path = path[index:]
+    suite, folder_name, command, results_folder = args
+    curdir = os.getcwd()
+    test_path = suite.replace((curdir + '/'), '')
     folder = string.replace(test_path, '/', '.')
-    output_path = new_path + results_folder + '/' + folder
+    output_path = curdir + '/' + results_folder + '/' + folder
     process = subprocess.Popen('pybot --outputdir=%s --output=result.xml --report=NONE --log=NONE %s %s'
-                               % (output_path, command, path), stdout=subprocess.PIPE,
+                               % (output_path, command, suite), stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, shell=True)
     print 'Started [PID:%s] %s' % (process.pid, folder)
     rc = wait_for_result(process, folder)
@@ -146,22 +148,49 @@ def has_results_folder(options):
     return False, None
 
 
-def copy_all_screenshots(suites, test_folder, results_folder):
-    count = 1
-    for i in range(len(suites)):
-        suite = suites[i]
-        index = suite.rfind(test_folder)
-        new_suite = suite[:index]
-        test_path = suite[index:]
-        folder = string.replace(test_path, '/', '.')
-        pabot_dir = new_suite + results_folder + '/' + folder
-        for root, dirs, files in os.walk(pabot_dir):
-            for fname in files:
-                if fname.endswith('.png'):
-                    abs_path = os.path.join(root, fname)
-                    shutil.copyfile(abs_path, (new_suite + results_folder +
-                                               '/' + 'selenium-screenshot-' + str(count) + '.png'))
-                    count += 1
+def update_screenshot_and_report(output_path, folder, results_folder):
+    tree = ET.parse(output_path + '/result.xml')
+    root = tree.getroot()
+    curdir = os.getcwd()
+
+    for suite in root.iter('msg'):
+        text = suite.text
+        if text.startswith('</td></tr>') and 'img src' in text:
+            old_image_path, new_image_path = get_href_attribute(text, folder)
+            temp = text.replace(('<a href="%s">' % old_image_path),
+                                ('<a href="%s">' % new_image_path))
+            final = temp.replace(('<img src="%s" width="800px">' % old_image_path),
+                                 ('<img src="%s" width="800px">' % new_image_path))
+            suite.text = final
+    tree.write(output_path + '/result.xml')
+
+    for fname in os.listdir(output_path):
+        if fname.endswith('.png'):
+            abs_path = output_path + '/' + fname
+            shutil.copyfile(abs_path, (curdir + '/' + results_folder +
+                                       '/' + folder + '.' + fname))
+
+
+def get_href_attribute(text, folder):
+    ind = text.index('href')
+    ind1 = text[ind:].index('>')
+    href_text = text[ind:(ind+ind1)]
+    href_text_parts = href_text.partition('=')
+    old_image_path = href_text_parts[2]
+    ind = old_image_path.index('"')
+    ind1 = old_image_path.rfind('"')
+    old_image_path = old_image_path[ind + 1:ind1]
+    new_image_path = folder + '.' + old_image_path
+    return old_image_path, new_image_path
+
+
+def copy_all_screenshots(suites, results_folder):
+    curdir = os.getcwd()
+    for suite in suites:
+        test_path = suite.replace((curdir + '/'), '')
+        folder = test_path.replace('/', '.')
+        output_path = curdir + '/' + results_folder + '/' + folder
+        update_screenshot_and_report(output_path, folder, results_folder)
 
 
 if __name__ == '__main__':

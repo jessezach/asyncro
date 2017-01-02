@@ -1,0 +1,5 @@
+from runner import runner
+import sys
+
+
+runner.run_tests(sys.argv[1:])
