@@ -4,56 +4,52 @@ import xml.etree.ElementTree as ET
 import multiprocessing
 import signal
 import shutil
+from robot.run import USAGE
+from robot.utils import ArgumentParser
 
 CTRL_C_PRESSED = False
 
 
 def parse_args(args):
     options = args
-    test_folder = args.pop()
-
-    if not 'test' in test_folder.lower():
-        raise ValueError('Tests path not provided')
-
-    has_result_path = has_results_folder(options)
-
-    if '-d' in options:
-        ind = options.index('-d')
-        options.pop(ind)
-        results_folder = options.pop(ind)
-    elif has_result_path[0]:
-        ind = has_result_path[1]
-        folder_parts = options[ind].partition('=')
-        results_folder = folder_parts[2]
-        options.pop(ind)
-    else:
-        results_folder = 'results'
-
     processes = max(multiprocessing.cpu_count(), 2)
+
     if options[0].startswith('--n'):
         process_parts = options[0].partition('=')
         if process_parts[2]:
             processes = int(process_parts[2])
-        options.pop(0)
+        options = options[1:]
 
-    command = options + [test_folder]
-    options = ' '.join(options)
-    command = ' '.join(command)
-    return command, options, test_folder, results_folder, processes
+    opts, datasources = ArgumentParser(USAGE,
+                           auto_pythonpath=False,
+                           auto_argumentfile=False,
+                           env_options='ROBOT_OPTIONS').\
+        parse_args(options)
+    keys = set()
+    for k in opts:
+        if opts[k] is None:
+            keys.add(k)
+
+    for k in keys:
+        del opts[k]
+    return opts, datasources, processes
 
 
 def run_tests(args):
-    command, options, test_folder, results_folder, processes = parse_args(args)
-    if command:
-        suites = initiate_dry_run(command)
-        curdir = os.getcwd()
+    options, datasources, processes = parse_args(args)
 
-        if os.path.exists(curdir + '/' + results_folder):
-            shutil.rmtree(curdir + '/' + results_folder)
+    if 'rerunfailed'not in options:
 
+        if 'outputdir' not in options:
+            results_folder = 'results'
+        else:
+            results_folder = get_results_folder(options['outputdir'])
+            del options['outputdir']
+
+        suites = initiate_dry_run(options, datasources)
         original_signal_handler = signal.signal(signal.SIGINT, keyboard_interrupt)
         pool = multiprocessing.Pool(processes=processes)
-        result = pool.map_async(execute_test, ((suite, test_folder, options, results_folder)
+        result = pool.map_async(execute_test, ((suite, options, results_folder)
                                                for suite in suites))
         pool.close()
         while not result.ready():
@@ -63,16 +59,27 @@ def run_tests(args):
                 keyboard_interrupt()
         signal.signal(signal.SIGINT, original_signal_handler)
         copy_all_screenshots(suites, results_folder)
-        merge_results(suites, test_folder, results_folder)
+        merge_results(suites, results_folder)
     else:
-        raise ValueError('No test folder provided')
+        pass
+
+def get_results_folder(outputdir):
+    if outputdir.endswith('.xml'):
+        end_index = outputdir.rfind('/')
+        return outputdir[:end_index]
+    return outputdir
 
 
-def initiate_dry_run(command):
+def initiate_dry_run(options, datasources):
     FNULL = open(os.devnull, 'w')
     curdir = os.getcwd()
-    subprocess.call("pybot --dryrun --output=%s/suites.xml --report=NONE --log=NONE %s"
-                    % (curdir, command), stdout=FNULL, stderr=subprocess.STDOUT, shell=True)
+    res = _options_to_cli_arguments(options)
+    datasources = [d.encode('utf-8') if isinstance(d, unicode) else d
+                   for d in datasources]
+
+    subprocess.call("pybot --dryrun --output=%s/suites.xml --report=NONE --log=NONE %s %s"
+                    % (curdir, ' '.join(res), ' '.join(datasources)),
+                    stdout=FNULL, stderr=subprocess.STDOUT, shell=True)
     tree = ET.parse(curdir + '/suites.xml')
     root = tree.getroot()
     suites = []
@@ -86,7 +93,25 @@ def initiate_dry_run(command):
     return suites
 
 
-def merge_results(suites, test_folder, results_folder):
+def _options_to_cli_arguments(opts):
+    res = []
+    for k, v in opts.items():
+        if isinstance(v, str):
+            res += ['--' + str(k), str(v)]
+        elif isinstance(v, unicode):
+            res += ['--' + str(k), v.encode('utf-8')]
+        elif isinstance(v, bool) and (v is True):
+            res += ['--' + str(k)]
+        elif isinstance(v, list):
+            for value in v:
+                if isinstance(value, unicode):
+                    res += ['--' + str(k), value.encode('utf-8')]
+                else:
+                    res += ['--' + str(k), str(value)]
+    return res
+
+
+def merge_results(suites, results_folder):
     curdir = os.getcwd()
     for i in range(len(suites)):
         suite = suites[i]
@@ -103,13 +128,14 @@ def execute_test(args):
     if CTRL_C_PRESSED:
         # Keyboard interrupt has happened!
         return
-    suite, folder_name, command, results_folder = args
+    suite, options, results_folder = args
+    res = _options_to_cli_arguments(options)
     curdir = os.getcwd()
     test_path = suite.replace((curdir + '/'), '')
     folder = string.replace(test_path, '/', '.')
     output_path = curdir + '/' + results_folder + '/' + folder
     process = subprocess.Popen('pybot --outputdir=%s --output=result.xml --report=NONE --log=NONE %s %s'
-                               % (output_path, command, suite), stdout=subprocess.PIPE,
+                               % (output_path, ' '.join(res), suite), stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, shell=True)
     print 'Started [PID:%s] %s' % (process.pid, folder)
     rc = wait_for_result(process, folder)
@@ -141,13 +167,6 @@ def keyboard_interrupt(*args):
     sys.exit()
 
 
-def has_results_folder(options):
-    for i in range(0, len(options)):
-        if options[i].startswith('--outputdir'):
-            return True, i
-    return False, None
-
-
 def update_screenshot_and_report(output_path, folder, results_folder):
     tree = ET.parse(output_path + '/result.xml')
     root = tree.getroot()
@@ -166,8 +185,8 @@ def update_screenshot_and_report(output_path, folder, results_folder):
 
     for fname in os.listdir(output_path):
         if fname.endswith('.png'):
-            src_path = output_path + '/' + fname
-            shutil.copyfile(src_path, (curdir + '/' + results_folder +
+            abs_path = output_path + '/' + fname
+            shutil.copyfile(abs_path, (curdir + '/' + results_folder +
                                        '/' + folder + '.' + fname))
 
 
