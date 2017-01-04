@@ -167,8 +167,8 @@ def update_screenshot_and_report(output_path, folder, results_folder):
 
     for fname in os.listdir(output_path):
         if fname.endswith('.png'):
-            abs_path = output_path + '/' + fname
-            shutil.copyfile(abs_path, (curdir + '/' + results_folder +
+            src_path = output_path + '/' + fname
+            shutil.copyfile(src_path, (curdir + '/' + results_folder +
                                        '/' + folder + '.' + fname))
 
 
