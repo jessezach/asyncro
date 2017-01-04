@@ -142,10 +142,9 @@ def keyboard_interrupt(*args):
 
 
 def has_results_folder(options):
-    for option in options:
-        if option.startswith('--outputdir'):
-            location = options.index(option)
-            return True, location
+    for i in range(0, len(options)):
+        if options[i].startswith('--outputdir'):
+            return True, i
     return False, None
 
 
