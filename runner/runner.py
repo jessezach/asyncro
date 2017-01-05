@@ -61,7 +61,8 @@ def run_tests(args):
         copy_all_screenshots(suites, results_folder)
         merge_results(suites, results_folder)
     else:
-        pass
+        print 'Support for rerun failed has not been added yet..'
+
 
 def get_results_folder(outputdir):
     if outputdir.endswith('.xml'):
